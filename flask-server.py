@@ -4,6 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import re
 import json
 from datetime import datetime, timedelta
+import requests
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -50,14 +51,26 @@ def calculate_pauses(subtitles):
         previous_end = end
     return guidance_chunks, pauses
 
+def download_srt_file(url):
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.text
+    else:
+        return None
+
 @app.route('/parse_srt', methods=['POST'])
 @auth.login_required
-def parse_file():
-    data = request.get_data()
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
+def process_srt_file():
+    data = request.get_json()
+    file_url = data.get('file_url')
 
-    srt_text = data.decode('utf-8')
+    if not file_url:
+        return jsonify({"error": "No file URL provided"}), 400
+
+    srt_text = download_srt_file(file_url)
+    if not srt_text:
+        return jsonify({"error": "Failed to download the SRT file"}), 500
+
     subtitles = parse_srt(srt_text)
     guidance_chunks, pauses = calculate_pauses(subtitles)
     return jsonify({'guidance_chunks': guidance_chunks, 'pauses': pauses}), 200
