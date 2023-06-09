@@ -52,22 +52,15 @@ def calculate_pauses(subtitles):
 
 @app.route('/parse_srt', methods=['POST'])
 @auth.login_required
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
+def parse_file():
+    data = request.get_data()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
 
-    file = request.files['file']
-
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-
-    if file:
-        srt_text = file.read().decode('utf-8')
-        subtitles = parse_srt(srt_text)
-        guidance_chunks, pauses = calculate_pauses(subtitles)
-        return jsonify({'guidance_chunks': guidance_chunks, 'pauses': pauses}), 200
-
-    return jsonify({"error": "An error occurred"}), 500
+    srt_text = data.decode('utf-8')
+    subtitles = parse_srt(srt_text)
+    guidance_chunks, pauses = calculate_pauses(subtitles)
+    return jsonify({'guidance_chunks': guidance_chunks, 'pauses': pauses}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.getenv("PORT")))
