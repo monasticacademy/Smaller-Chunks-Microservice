@@ -1,45 +1,73 @@
 from flask import Flask, request, jsonify
-from flask_httpauth import HTTPTokenAuth
+from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
 import re
+import json
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
-auth = HTTPTokenAuth(scheme='Bearer')
+auth = HTTPBasicAuth()
 
 users = {
-    "admin": generate_password_hash("password"),  # Never store passwords in plaintext in a real app!
+    "username": generate_password_hash("password")
 }
-user_tokens = {}
 
-def timestamp_to_seconds(timestamp):
-    try:
-        hours, minutes, seconds = timestamp.split(',')[0].split(':')
-        total_seconds = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
-    except ValueError:
-        return None
-    return total_seconds
+@auth.verify_password
+def verify_password(username, password):
+    if username in users and check_password_hash(users.get(username), password):
+        return username
 
-@auth.verify_token
-def verify_token(token):
-    if token in user_tokens:
-        return user_tokens[token]
-    return None
+def parse_srt(srt_text):
+    chunks = re.split(r'(\d\d:\d\d:\d\d,\d\d\d --> \d\d:\d\d:\d\d,\d\d\d)', srt_text)[1:]
+    subtitles = []
+    for i in range(0, len(chunks), 2):
+        times, text = chunks[i], chunks[i+1].strip()
+        sentences = re.split(r'(?<=\D) \d+ ', text)
+        for sentence in sentences:
+            sentence = re.sub(r' \d+$', '', sentence)
+            if sentence:
+                subtitles.append((times, sentence))
+    return subtitles
 
-@app.route('/login', methods=['POST'])
-def login():
-    username = request.json.get('username')
-    password = request.json.get('password')
-    if username in users and check_password_hash(users[username], password):
-        token = os.urandom(24).hex()  # Generate a secure random token
-        user_tokens[token] = username
-        return jsonify(token=token)
-    return jsonify(error='Invalid username or password'), 401
+def calculate_pauses(subtitles):
+    format_str = "%H:%M:%S,%f"
+    guidance_chunks = []
+    pauses = []
+    previous_end = None
+    for times, text in subtitles:
+        start, end = re.findall(r'(\d\d:\d\d:\d\d,\d\d\d)', times)
+        start = datetime.strptime(start, format_str)
+        end = datetime.strptime(end, format_str)
+        if previous_end is not None:
+            pause = round((start - previous_end).total_seconds())
+            if pause < 3 and guidance_chunks:
+                guidance_chunks[-1] += " " + text
+            else:
+                pauses.append(pause)
+                guidance_chunks.append(text)
+        else:
+            guidance_chunks.append(text)
+        previous_end = end
+    return guidance_chunks, pauses
 
-@app.route('/convert', methods=['POST'])
+@app.route('/parse_srt', methods=['POST'])
 @auth.login_required
-def convert():
-    # Rest of the code goes here...
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    if file:
+        srt_text = file.read().decode('utf-8')
+        subtitles = parse_srt(srt_text)
+        guidance_chunks, pauses = calculate_pauses(subtitles)
+        return jsonify({'guidance_chunks': guidance_chunks, 'pauses': pauses}), 200
+
+    return jsonify({"error": "An error occurred"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=int(os.getenv("PORT")))
