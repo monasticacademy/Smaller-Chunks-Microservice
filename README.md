@@ -1,2 +1,2 @@
-# Guidance-Chunks-Microservice
+# Smaller-Chunks-Microservice
 A microservice for Cyborgrygor
